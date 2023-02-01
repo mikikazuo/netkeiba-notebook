@@ -5,6 +5,7 @@
  
 # 経緯
 当初はデータベース(SQLite)を利用していたが、cuDFでの並列処理での取得が難しいため簡単なCSVに移行した。
+[ベースとなったソースコード](https://github.com/watanta/netkeiba-scrapy)
  
 # 必要ライブラリ
 * lightgbm 3.3.5
