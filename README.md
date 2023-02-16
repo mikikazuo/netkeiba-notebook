@@ -1,21 +1,19 @@
-# netkeiba-notebook
-１．htmlから競馬データを抽出しCSVに出力（CSV_Generator.py）
-
-２．LightGBMによるデータ分析（LightGBM.py）
+# LightGBMによるデータ分析
+[netkeiba-scrapy](https://github.com/mikikazuo/netkeiba-scrapy)で作成したcsvを元に分析を行う（LightGBM.py）
  
 # 経緯
-当初はデータベース(SQLite)を利用していたが、cuDFでの並列処理での取得が難しいため簡単なCSVに移行した。
+当初はデータベース(SQLite)を利用していたが、cuDFでの並列処理での取得が難しいため、簡単なcsvに移行した。
+
 [ベースとなったソースコード](https://github.com/watanta/netkeiba-scrapy)
  
 # 必要ライブラリ
 * lightgbm 3.3.5
-* lxml
 
 # インストール方法
 ```bash
 pip install lightgbm
-pip install lxml
 ```
+
 # 流れ
 cuDFのDockerコンテナを作成する。（[コマンド作成器](https://rapids.ai/start.html#get-rapids)）
 
@@ -26,30 +24,35 @@ docker create -v D:/netkeiba:/rapids/notebooks/netkeiba --name netkeiba --gpus a
 ```
 
 ### -vオプションについて
-ホスト側のフォルダをコンテナ内フォルダとリンクさせるためのもの。
+ホスト側のフォルダをコンテナ内フォルダとリンクさせ、コンテナ削除後も永続的に残すためのもの。
 
 `-v [ホスト側パス]:[コンテナ側パス]`
 
 ## Jupyter Labをもっと便利に
 ### jupytext
-.ipynbではなく.pyでgitに保存させる。.ipynbではメタデータが多いため、gitと相性が悪い。
-https://gammasoft.jp/blog/jupyterlab-desktop-install-extensions/
+.ipynbから.pyを自動生成するためのもの。.ipynbではメタデータが多いため、gitと相性が悪いため。
+
+[参考サイト](https://gammasoft.jp/blog/jupyterlab-desktop-install-extensions/)
 
 ### black ＆ isort
 コード整形とインポート順の自動整理。
-https://pystyle.info/jupyterlab-recommend-extensions/#outline__4
- 
+
+[参考サイト](https://pystyle.info/jupyterlab-recommend-extensions/#outline__4)
+#### 注意
+整形された.pyが保存されるように数秒間隔を空けて保存ボタンを2回押す必要あり。
+
+内部処理が 「保存 ⇒ jupytextの.py生成 ⇒ 整形」という順になっており遅れているためと思われる。
+
+もしくは、整形専用ショートカット（別途設定が必要）を押してから保存
+
 # 注意
-jupytextで.pyが生成されるタイミングが自動整形よりも前なので注意。
-（対策　⇒　間隔をあけて２回保存ボタンを押す or 整形専用ショートカットを押してから保存）
+- cuDFのPython対応バージョンが3.8 or 3.9のため、3.9を使用している。
 
-cuDFのPython対応バージョンが3.8 or 3.9のため、3.9を使用している。
+- cuDFはlocによる参照が遅いので、必要であればto_pandas()でPandasに変換するとよい。csvの読み込みはcuDFのほうが上。
 
-cuDFはlocによる参照が遅いので、必要であればto_pandas()でPandasに変換するとよい。.csvの読み込みはcuDFのほうが上。
+- メモリを5GB以上消費する。
 
-メモリを5GB以上消費する。
-
-馬データとレースデータのマージ後対象データが１０万件以下に抑えたり、deleteで変数を解放するとよい。
+- 馬データとレースデータのマージ後対象データが１０万件以下に抑えたり、deleteで変数を解放するとよい。
 
 # 著者
 * mikikazuo
