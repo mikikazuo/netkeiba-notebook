@@ -45,23 +45,15 @@ class HorseProcessing:
         return self.df[column].to_pandas().map(func)
 
     def __init__(self):
-        self.df = cudf.read_csv("../csv_data/to_csv_horse.csv")
+        self.df = cudf.read_csv("../csv_data/horse.csv")
 
         # 不要列の削除
         self.df = self.df.drop(
-            ["race_name", "horse_name", "sell_price", "maker_name", "jokey", "reward"],
+            ["race_name", "horse_name", "sell_price", "maker_name", "jockey", "reward"],
             axis=1,
         )
         # 不要行の削除
-        str_columns = [
-            column for column in self.df if self.df[column].dtype == np.dtype("O")
-        ]
-        self.df = self.df[
-            ~self.df["order"].str.contains("失")
-            & ~self.df["horse_weight"].str.contains("None")
-        ]
-        for column in str_columns:
-            self.df = self.df[~self.df[column].str.contains("\xa0")]
+        self.df = self.df.dropna(subset=["order", "horse_weight", "pace"])
 
         self.df["birth_date"] = self.processForPandas(
             "birth_date", lambda x: datetime.datetime.strptime(x, "%Y年%m月%d日").month
@@ -73,11 +65,6 @@ class HorseProcessing:
         self.df["venue"] = self.processForPandas(
             "venue", lambda x: re.sub(r"\d", "", x)
         )
-        # 1,000のような形でついている ,(カンマ)を消す
-        self.df["odds"] = self.processForPandas("odds", lambda x: re.sub(r",", "", x))
-        self.df["order"] = self.processForPandas(
-            "order", lambda x: re.sub(r"\D", "", x)
-        )  # (降)の除去 ex.2015103057
 
         timeList = self.df["time"].str.split(":")
         timeList = timeList.to_pandas().map(lambda x: list(map(float, x)))
@@ -132,7 +119,7 @@ class HorseProcessing:
             self.df["horse_num"] - 1
         ).astype("float64")
         self.changeType(
-            ["from", "venue", "weather", "type", "condition", "maker_id", "jokey_id"],
+            ["from", "venue", "weather", "type", "condition", "maker_id", "jockey_id"],
             "category",
         )
 
@@ -149,7 +136,8 @@ class RaceProcessing:
             self.df[col] = self.df[col].astype(type)
 
     def __init__(self):
-        self.df = cudf.read_csv("../csv_data/to_csv_race.csv")[-100000:]  # ２０万が限界 2past
+        # １０万件でおおよそ4年くらいのレースが対象になる　２０万が限界 2past
+        self.df = cudf.read_csv("../csv_data/race.csv")[-100000:]
 
         # 不要列の削除
         self.df = self.df.drop(["owner", "trainer"], axis=1)
@@ -183,23 +171,15 @@ class PaybackProcessing:
     #             self.df.iloc[0][col] = None
 
     def __init__(self):
-        self.df = cudf.read_csv("../csv_data/to_csv_payback.csv")
+        self.df = pd.read_csv("../csv_data/payback.csv", index_col="race_id")
 
-        # TODO　一時的な対応、jsonに備えてキー名をダブルクォートでくくるようスクレイピング側修正済み
-        for column in ["tanshou", "fukushou", "wide"]:
-            self.df[column] = self.df[column].str.replace("'", '"')
 
-        # 不要列の削除
-        # self.df = self.df.drop(['wide'], axis=1)
-        # 不要行の削除
-        for column in ["tanshou", "fukushou"]:
-            self.df = self.df[~self.df[column].isnull()]
-            self.df[column] = self.df[column].to_pandas().map(lambda x: json.loads(x))
 
         self.df = self.df.set_index("race_id")
 
 
 # %% tags=[]
+# %% tags=[] jupyter={"outputs_hidden": true}
 # %%time
 horseData = HorseProcessing()  # pdに比べcudfは3倍の速度(csvの読み込み、編集など)
 raceData = RaceProcessing()
@@ -376,7 +356,7 @@ for i in range(pastNum):
         .map(lambda x: x.days)
         .astype("int16")
     )
-    # mergeined_df['jokey_same_' + str(i+1)] = (mergeined_df['jokey_id'] == mergeined_df['jokey_id_' + str(i+1)]).astype('int8')
+    # mergeined_df['jockey_same_' + str(i+1)] = (mergeined_df['jockey_id'] == mergeined_df['jockey_id_' + str(i+1)]).astype('int8')
     # mergeined_df['owner_same_' + str(i+1)] = (mergeined_df['owner_id'] == mergeined_df['owner_id_' + str(i+1)]).astype('int8')
 
 
