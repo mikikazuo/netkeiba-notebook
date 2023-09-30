@@ -35,9 +35,9 @@ pd.set_option("display.max_columns", None)
 
 # %% tags=[]
 class HorseProcessing:
-    def changeType(self, colmns, type):
-        for col in colmns:
-            self.df[col] = self.df[col].astype(type)
+    def change_type(self, columns, to_type):
+        for col in columns:
+            self.df[col] = self.df[col].astype(to_type)
 
     # 代入先cudf型のdataframeならcudfに自動変換して代入される
     def processForPandas(self, column, func):
@@ -53,7 +53,8 @@ class HorseProcessing:
             axis=1,
         )
         # 不要行の削除
-        self.df = self.df.dropna(subset=["order", "horse_weight", "pace"])
+        # TODO 中央競馬のみに絞ればここで弾く必要もなくなるのでは
+        self.df = self.df.dropna(subset=["order", "horse_weight", "pace", "nobori"])
 
         self.df["birth_date"] = self.processForPandas(
             "birth_date", lambda x: datetime.datetime.strptime(x, "%Y年%m月%d日").month
@@ -85,7 +86,7 @@ class HorseProcessing:
         self.df["pace_goal"] = paceList.map(lambda x: x[1])
 
         # TODO sell_priceが空のパターンがないことを確認したのち追加  reward  horssenumでorderを割る  rewardは現状すべて０
-        self.changeType(
+        self.change_type(
             [
                 "birth_date",
                 "race_month",
@@ -99,11 +100,11 @@ class HorseProcessing:
             ],
             "int8",
         )
-        self.changeType(["length", "horse_weight"], "int16")
+        self.change_type(["length", "horse_weight"], "int16")
 
         # TODO rewardの桁数足りないが大丈夫か horseData.dfList.reward.map(float).max()
         # weightは端数(0.5)ありのためこっち
-        self.changeType(
+        self.change_type(
             [
                 "odds",
                 "time",
@@ -118,12 +119,47 @@ class HorseProcessing:
         self.df["order_normalize"] = 1 - (self.df["order"] - 1) / (
             self.df["horse_num"] - 1
         ).astype("float64")
-        self.changeType(
+        self.change_type(
             ["from", "venue", "weather", "type", "condition", "maker_id", "jockey_id"],
             "category",
         )
 
         self.df = self.df.set_index(["horse_id", "race_id"])
+
+    def set_race_cnt(self, data):
+        """
+        過去のレース数カラムの追加
+        :param data:
+        :return:
+        """
+        self.df.loc[data[0], "race_cnt"] = list(reversed(range(0, data[1])))
+
+    def set_order_cnt(self, data):
+        """
+        過去の上位順位回数カラムの追加
+        :param data:
+        :return:
+        """
+        order_cnt = [[0], [0], [0]]  # 上位順位回数の遷移（最初は必ず０と分かっているため事前初期化）
+        for idx, order in enumerate(
+            self.df.loc[data[0], "order"].iloc[:0:-1]
+        ):  # 対象レース以前の結果を使うため最後が不要 iloc[:0...　としている
+            for target_order in range(3):
+                cnt = order_cnt[target_order][0]
+                if (
+                    order == target_order + 1
+                ):  # 対応する順位が見つかった時(リストのインデックスにも使っているため +1している)
+                    cnt += 1
+                order_cnt[target_order].insert(0, cnt)
+
+        for target_order in range(3):
+            self.df.loc[data[0], "order_" + str(target_order + 1) + "_cnt"] = order_cnt[
+                target_order
+            ]
+            self.df["order_" + str(target_order + 1) + "_cnt_normalize"] = self.df[
+                "order_" + str(target_order + 1) + "_cnt"
+            ] / self.df["race_cnt"].astype("float16")
+        self.df = self.df.drop("order_" + str(target_order + 1) + "_cnt", axis=1)
 
 
 # %% tags=[]
@@ -137,7 +173,7 @@ class RaceProcessing:
 
     def __init__(self):
         # １０万件でおおよそ4年くらいのレースが対象になる　２０万が限界 2past
-        self.df = cudf.read_csv("../csv_data/race.csv")[-100000:]
+        self.df = pd.read_csv("../csv_data/race.csv")
 
         # 不要列の削除
         self.df = self.df.drop(["owner", "trainer"], axis=1)
@@ -171,19 +207,19 @@ class PaybackProcessing:
     #             self.df.iloc[0][col] = None
 
     def __init__(self):
-        self.df = pd.read_csv("../csv_data/payback.csv", index_col="race_id")
-
-
-
-        self.df = self.df.set_index("race_id")
+        self.df = cudf.read_csv("../csv_data/payback.csv", index_col="race_id")
+        # for column in ["tanshou", "fukushou"]:
+        #     self.df[column] = self.df[column].to_pandas().map(lambda x: json.loads(x))
 
 
 # %% tags=[]
-# %% tags=[] jupyter={"outputs_hidden": true}
 # %%time
 horseData = HorseProcessing()  # pdに比べcudfは3倍の速度(csvの読み込み、編集など)
 raceData = RaceProcessing()
 paybackData = PaybackProcessing()
+
+# %%
+horseData = HorseProcessing()
 
 
 # %%
@@ -234,40 +270,49 @@ horseData.df = reduce_mem_usage(horseData.df.to_pandas())
 raceData.df = reduce_mem_usage(raceData.df.to_pandas())
 paybackData.df = reduce_mem_usage(paybackData.df.to_pandas())
 
-# %% tags=[]
+# %% tags=[] jupyter={"outputs_hidden": true}
+# %%time
+
+cnt_data_list = [
+    [_name, len(_df)] for _name, _df in horseData.df.to_pandas().groupby("horse_id")
+]
+horseData.df["race_cnt"] = 0
+horseData.df["race_cnt"] = horseData.df["race_cnt"].astype("uint8")
+for cnt_data in tqdm(cnt_data_list):
+    horseData.set_race_cnt(cnt_data)
+    horseData.set_order_cnt(cnt_data)
+
+# %%
+horseData.df
+
+# %% tags=[] jupyter={"outputs_hidden": true}
 # %%time
 
 
 # 過去のレース数
-def set_race_count(id):
-    horseData.df.loc[id[0], "race_cnt"] = list(reversed(range(0, id[1])))
+def set_race_count(data):
+    horseData.df.loc[data[0], "race_cnt"] = list(reversed(range(0, data[1])))
 
 
 # 過去の上位順位回数
-def set_order_count(id):
-    order_count = [[0], [0], [0]]
-    df = horseData.df.loc[id[0], "order"]
-    df_length = len(df)
-    for idx, order in enumerate(df.iloc[::-1]):
-        if idx == df_length - 1:
-            break
-        for order_idx in range(3):
-            order_count[order_idx].insert(
-                0,
-                order_count[order_idx][0] + 1
-                if order == order_idx + 1
-                else order_count[order_idx][0],
-            )
+def set_order_count(data):
+    order_cnt = [[0], [0], [0]]
+    target_df = horseData.df.loc[data[0]]
+    for idx, order in enumerate(target_df["order"].iloc[:0:-1]):
+        for target_order in range(3):
+            cnt = order_cnt[target_order][0]
+            if order == target_order + 1:  # 対応する順位が見つかった時(リストのインデックスにも使っているため +1している)
+                cnt += 1
+            order_cnt[target_order].insert(0, cnt)
 
-    for order_idx in range(3):
-        horseData.df.loc[id[0], "order_" + str(order_idx + 1) + "_cnt"] = order_count[
-            order_idx
-        ]
+        for target_order in range(3):
+            target_df["order_" + str(target_order + 1) + "_cnt"] = order_cnt[
+                target_order
+            ]
 
 
-count_data = [
-    [_name, len(_df)] for _name, _df in tqdm(horseData.df.groupby("horse_id"))
-]
+count_data = [[_name, len(_df)] for _name, _df in horseData.df.groupby("horse_id")]
+
 horseData.df["race_cnt"] = 0
 horseData.df["race_cnt"] = horseData.df["race_cnt"].astype("uint8")
 for id in tqdm(count_data):
@@ -293,6 +338,9 @@ for order_idx in range(3):
 mergeined_df_base = raceData.df.merge(
     horseData.df, on=["horse_id", "race_id"], how="inner"
 )
+
+# %%
+mergeined_df_base.columns
 
 # %% tags=[]
 # %%time
